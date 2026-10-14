@@ -1,53 +1,65 @@
 name: Build and Deploy Voting App
- 
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
- 
+
 permissions:
   contents: read
   id-token: write
- 
+
 env:
   PROJECT_ID: emerald-oath-511507-e6
   REGION: us-central1
   CLUSTER: autopilot-cluster-1
   REGISTRY: us-central1-docker.pkg.dev/emerald-oath-511507-e6/voting-repo
- 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
- 
-      - uses: google-github-actions/auth@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
- 
-      - uses: google-github-actions/setup-gcloud@v2
- 
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Configure Docker
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
- 
-      - name: Build and push images
+        run: |
+          gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+      - name: Build and Push Images
         run: |
           for app in vote result worker; do
-            docker build -t $REGISTRY/$app:${{ github.sha }} ./$app
-            docker push $REGISTRY/$app:${{ github.sha }}
+            docker build -t ${REGISTRY}/${app}:${{ github.sha }} ./${app}
+            docker push ${REGISTRY}/${app}:${{ github.sha }}
           done
- 
-      - uses: google-github-actions/get-gke-credentials@v2
+
+      - name: Get GKE Credentials
+        uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.CLUSTER }}
           location: ${{ env.REGION }}
- 
+
       - name: Deploy to GKE
         run: |
-          sed -i "s|__REGISTRY__|$REGISTRY|g; s|__TAG__|${{ github.sha }}|g" k8s/voting-app.yaml
+          sed -i "s|__REGISTRY__|${REGISTRY}|g" k8s/voting-app.yaml
+          sed -i "s|__TAG__|${{ github.sha }}|g" k8s/voting-app.yaml
+
           kubectl apply -f k8s/voting-app.yaml
+
           kubectl rollout status deployment/vote --timeout=300s
           kubectl rollout status deployment/result --timeout=300s
           kubectl rollout status deployment/worker --timeout=300s
-          kubectl get services
+
+          kubectl get pods
+          kubectl get svc
